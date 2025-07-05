@@ -1,4 +1,14 @@
-<h1 id="-red-team-lab-report-reconstructing-x86-linux-shellcode-execve-bin-sh-">🧪 Red Team Lab Report: Reconstructing x86 Linux Shellcode (<code>execve(&quot;/bin/sh&quot;)</code>)</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 1 – x86 Shellcode Reconstruction</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1 id="-red-team-lab-report-reconstructing-x86-linux-shellcode-execve-bin-sh-">🧪 Red Team Lab Report: Reconstructing x86 Linux Shellcode (<code>execve(&quot;/bin/sh&quot;)</code>)</h1>
 <p><strong>Author:</strong> Alexander Nichols<br><strong>Date:</strong> July 5th, 2025<br><strong>Platform:</strong> Kali Linux<br><strong>Category:</strong> Red Team Development / Reverse Engineering / Assembly<br><strong>Objective:</strong> Disassemble, understand, and reconstruct <code>execve(&quot;/bin/sh&quot;)</code> shellcode from raw bytes.</p>
 <hr>
 <h2 id="-overview">🛏️ Overview</h2>
@@ -275,4 +285,17 @@ ld -m elf_i386 shell<span class="hljs-selector-class">.o</span> -o shell
 </ul>
 <hr>
 <p><em>All work performed in a self-contained Kali Linux lab. Source code, binaries, and debugging sessions are available on request or GitHub.</em></p>
+
+
+
+    <!-- Add a link back to Labs -->
+    <hr />
+    <p><a href="labs.html">⬅ Back to Labs</a></p>
+  </div>
+
+  <!-- Dark mode toggle -->
+  <button id="mode-toggle">🌙</button>
+  <script src="assets/js/darkmode.js"></script>
+</body>
+</html>
 
