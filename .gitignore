@@ -3,3 +3,5 @@
 docs/lab1_*.html
 docs/assets/css/original_style.css
 lab_html_backups/*
+docs/lab_html_backups/
+docs/assets/css/style_premerge.css
