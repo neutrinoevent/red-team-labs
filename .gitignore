@@ -1,0 +1,5 @@
+.DS_Store
+*.html~*
+docs/lab1_*.html
+docs/assets/css/original_style.css
+
