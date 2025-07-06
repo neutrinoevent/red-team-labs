@@ -2,4 +2,4 @@
 *.html~*
 docs/lab1_*.html
 docs/assets/css/original_style.css
-
+lab_html_backups/*
