@@ -109,6 +109,24 @@
   <p><strong>Result:</strong> If successful, this spawns a shell with no arguments or environment.</p>
 </details>
 
+<h2 id="bonus">🧠 Bonus Insight: <code>mov ebx, esp</code></h2>
+<p>This is the magic move that connects your stack prep to <code>execve()</code>. Once you’ve pushed the <code>"/bin//sh"</code> string onto the stack, the stack pointer (<code>esp</code>) points directly to the start of that string. In other words, we already have a valid pointer in memory — no <code>malloc</code>, no static buffer, no address hardcoding.</p>
+
+<p>By doing <code>mov ebx, esp</code>, we’re handing that exact pointer to the kernel — telling it: "this is the binary I want to execute." That’s because <code>execve()</code> expects three arguments:</p>
+
+<pre><code>
+ebx: a pointer to the filename            (const char *filename)
+ecx: a pointer to an array of arguments  (char *const argv[])
+edx: a pointer to an array of env vars   (char *const envp[])
+</code></pre>
+
+<p>Everything starts with the filename — and that’s what this move sets up.</p>
+
+<p>Here’s why it matters: hardcoding an address (like <code>mov ebx, 0xdeadbeef</code>) might work in one layout, but will almost always fail in a real-world exploit or when ASLR (Address Space Layout Randomization) is in play. The stack is the only reliable scratchpad we control — and <code>esp</code> is our live pointer into it. So instead of guessing where our string landed, we just push it, and immediately grab its address via <code>esp</code>.</p>
+
+<p>This makes the shellcode position-independent. You don’t need to know where it’s running — just that the stack is writable and executable. That’s why this pattern (<code>mov ebx, esp</code>) is baked into everything from bare-metal shellcode to modern ROP chains. It solves the address problem without making assumptions about memory layout — and that makes it resilient.</p>
+<hr>
+
 <h3>📉 Register State Summary</h3>
 <pre><code>
 EAX = 0x0b      ; execve syscall number
@@ -180,9 +198,6 @@ if __name__ == "__main__":
     </blockquote>
     <hr>
 
-    <h2 id="bonus">🧠 Bonus Insight: <code>mov ebx, esp</code></h2>
-    <p>After pushing the string onto the stack, <code>esp</code> points to it. <code>execve()</code> needs that pointer in <code>ebx</code>. This is a classic stack-pivot technique used in many shellcodes and ROP chains.</p>
-    <hr>
 
     <h2 id="skills">✅ Skills Demonstrated</h2>
     <ul>
