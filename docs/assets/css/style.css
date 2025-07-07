@@ -76,7 +76,12 @@ pre {
 code {
   font-family: 'Fira Code', monospace;
   font-size: 0.95em;
+  background-color: #1a1a1a;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  color: #7edfff;
 }
+
 
 /* Highlight.js overrides */
 .hljs {
