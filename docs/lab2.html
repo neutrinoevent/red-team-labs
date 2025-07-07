@@ -55,18 +55,29 @@
     </ul>
     <hr>
 
-    <h2 id="stack-drill">📦 Shellcode Demonstrations: Stack + Syscall Execution</h2>
+<h2 id="stack-drill">📦 Shellcode Demonstrations: Stack + Syscall Execution</h2>
 
-    <h3>🧪 Minimal Version (for stack visualization)</h3>
-    <pre><code class="language-nasm">_start:
+<h3>🧪 Minimal Version (for stack visualization)</h3>
+<pre><code class="language-nasm">_start:
     push 0x68732f2f  ; //sh
     push 0x6e69622f  ; /bin
     mov ebx, esp     ; ebx → "/bin//sh"
     jmp $            ; halt here (infinite loop)
 </code></pre>
 
-    <h3>🚀 Complete Version (with execve syscall)</h3>
-    <pre><code class="language-nasm">_start:
+<details>
+  <summary>🔍 Step-by-step breakdown (Minimal Version)</summary>
+  <ul>
+    <li><code>push 0x68732f2f</code>: Pushes the bytes for "<code>//sh</code>" in reverse order (little-endian). The top of the stack now ends with "<code>sh</code>".</li>
+    <li><code>push 0x6e69622f</code>: Pushes "<code>/bin</code>" in reverse. Now the full string "<code>/bin//sh</code>" is on the stack.</li>
+    <li><code>mov ebx, esp</code>: Stores the address of the top of the stack (the start of our string) into EBX.</li>
+    <li><code>jmp $</code>: Jumps to current instruction (infinite loop). Useful in debugging — lets us inspect memory state before triggering any syscall.</li>
+  </ul>
+  <p><strong>🧠 Why this matters:</strong> This is the core pattern used in all shellcode: build the string, set the pointer, and prep for syscall. We freeze execution here so we can analyze the stack in <code>gdb</code> or <code>pwndbg</code>.</p>
+</details>
+
+<h3>🚀 Complete Version (with execve syscall)</h3>
+<pre><code class="language-nasm">_start:
     xor eax, eax         ; eax = 0
     push eax             ; null terminator
     push 0x68732f2f      ; //sh
@@ -80,46 +91,33 @@
     int 0x80             ; invoke syscall
 </code></pre>
 
-    <h2 id="shellcode-deep-dive">🔎 Shellcode Deep Dive</h2>
+<details>
+  <summary>🔍 Line-by-line breakdown (Complete Shellcode)</summary>
+  <ul>
+    <li><code>xor eax, eax</code>: Zeroes out EAX — a common pattern to avoid NULL bytes in shellcode. Sets us up to push a null terminator and later set syscall number cleanly.</li>
+    <li><code>push eax</code>: Pushes 0x00000000 (NULL) — this becomes the null terminator for our string.</li>
+    <li><code>push 0x68732f2f</code>: Pushes "//sh" in little-endian order.</li>
+    <li><code>push 0x6e69622f</code>: Pushes "/bin" in little-endian order. Now the stack has "/bin//sh\\x00" fully assembled.</li>
+    <li><code>mov ebx, esp</code>: EBX = pointer to the "/bin//sh" string — required for execve’s first argument (<code>filename</code>).</li>
+    <li><code>push eax</code>: Pushes NULL as the second argument in argv[] (argv[1] = NULL).</li>
+    <li><code>push ebx</code>: Pushes pointer to "/bin//sh" as first element in argv[].</li>
+    <li><code>mov ecx, esp</code>: ECX now points to the argv array (array of pointers).</li>
+    <li><code>mov edx, eax</code>: EDX = NULL — used for the envp[] argument (we’re not passing any env vars).</li>
+    <li><code>mov al, 0x0b</code>: AL = 11 (syscall number for <code>execve</code> on Linux).</li>
+    <li><code>int 0x80</code>: Trigger the kernel interrupt — this executes <code>execve("/bin//sh", ["/bin//sh", NULL], NULL)</code>.</li>
+  </ul>
+  <p><strong>Result:</strong> If successful, this spawns a shell with no arguments or environment.</p>
+</details>
 
-    <details>
-      <summary><code>push 0x68732f2f</code> — pushes "//sh" in reverse</summary>
-      <p>This pushes the ASCII string <code>//sh</code> onto the stack in little-endian format.<br>
-      - 0x68 = 'h', 0x73 = 's', 0x2f = '/', 0x2f = '/'<br>
-      - Linux tolerates extra slashes, so <code>//sh</code> is valid.<br>
-      - Aligns our stack to 4-byte boundaries.</p>
-    </details>
-
-    <details>
-      <summary><code>push 0x6e69622f</code> — pushes "/bin" in reverse</summary>
-      <p>This represents the reversed bytes of <code>/bin</code>:<br>
-      - 0x6e = 'n', 0x69 = 'i', 0x62 = 'b', 0x2f = '/'<br>
-      So the string in memory becomes <code>/bin//sh</code>.</p>
-    </details>
-
-    <details>
-      <summary><code>mov ebx, esp</code> — set execve's filename</summary>
-      <p>This points EBX to the top of the stack, which now holds the string <code>/bin//sh</code>.</p>
-    </details>
-
-    <details>
-      <summary><code>xor eax, eax</code> — clears EAX</summary>
-      <p>Zeroes EAX so we can use it both for pushing NULL and later loading syscall number.</p>
-    </details>
-
-    <details>
-      <summary><code>int 0x80</code> — invoke syscall</summary>
-      <p>Triggers interrupt 0x80, invoking the kernel with syscall number in EAX (0x0b = execve).</p>
-    </details>
-
-    <h3>📉 Register State Summary</h3>
-    <pre><code>
+<h3>📉 Register State Summary</h3>
+<pre><code>
 EAX = 0x0b      ; execve syscall number
 EBX = pointer to "/bin//sh"
 ECX = pointer to argv array
 EDX = 0 (NULL envp)
 ESP = stack top, contains string and argv
 </code></pre>
+
     <hr>
 
     <h2 id="memory-breakdown">🔬 In-Memory Breakdown (little-endian, stack grows down)</h2>
@@ -136,7 +134,12 @@ ESP = stack top, contains string and argv
 └─────────────────────┘
             ↑ esp points here (start of "/bin//sh")
 </code></pre>
-    <hr>
+
+<blockquote>
+  🧠 <strong>Note:</strong> After <code>mov ebx, esp</code>, <code>ebx</code> correctly points to the string <code>"/bin//sh"</code>, which will be passed as the first argument to <code>execve()</code>.
+</blockquote>
+
+<hr>
 
     <h2 id="python-helper">🔧 Python Helper Tool: Little-Endian Converter</h2>
     <pre><code class="language-python">def to_little_endian(val, size=4):
