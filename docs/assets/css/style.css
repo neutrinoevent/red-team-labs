@@ -73,6 +73,18 @@ pre {
   font-size: 0.95em;
 }
 
+/* Added or modified this specific rule for code within pre */
+pre > code {
+  display: block; /* Ensures code inside pre behaves as a block element */
+  font-family: 'Fira Code', monospace;
+  font-size: 0.95em;
+  background-color: #1a1a1a;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  color: #7edfff;
+}
+
+/* General code rule, for inline <code> tags */
 code {
   font-family: 'Fira Code', monospace;
   font-size: 0.95em;
