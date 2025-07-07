@@ -116,8 +116,7 @@
 
 <p>By doing <code>mov ebx, esp</code>, we’re handing that exact pointer to the kernel — telling it: "this is the binary I want to execute." That’s because <code>execve()</code> expects three arguments:</p>
 
-<pre><code class="language-text">
-ebx: a pointer to the filename           (const char *filename)
+<pre><code class="language-none">ebx: a pointer to the filename           (const char *filename)
 ecx: a pointer to an array of arguments  (char *const argv[])
 edx: a pointer to an array of env vars   (char *const envp[])
 </code></pre>
@@ -130,8 +129,7 @@ edx: a pointer to an array of env vars   (char *const envp[])
 <hr>
 
 <h3>📉 Register State Summary</h3>
-<pre><code>
-EAX = 0x0b      ; execve syscall number
+<pre><code class="language-none">EAX = 0x0b      ; execve syscall number
 EBX = pointer to "/bin//sh"
 ECX = pointer to argv array
 EDX = 0 (NULL envp)

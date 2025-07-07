@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lab 1 – x86 Shellcode Reconstruction</title>
     <link rel="stylesheet" href="assets/css/style.css" />
+    <!-- Highlight.js GitHub Dark Theme -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
 <body>
     <div class="container">
@@ -76,7 +78,7 @@ Saved as: shellcode.raw
         <h2 id="step-2">🔍 Step 2: Disassemble with <code>ndisasm</code></h2>
 <pre><code class="language-bash">ndisasm -b 32 shellcode.raw
 </code></pre>
-<pre><code class="language-nasm">00000000  6A0B              push byte +0xb
+<pre><code class="language-none">00000000  6A0B              push byte +0xb
 00000002  58                pop eax
 00000003  99                cdq
 00000004  52                push edx
@@ -99,7 +101,7 @@ Saved as: shellcode.raw
 
         <h2 id="debug">🔧 Reverse Engineering & Debugging</h2>
         <h3>🚫 Initial Assembly Attempt</h3>
-<pre><code class="language-nasm">BITS 32
+<pre><code class="language-none">BITS 32
 global _start
 section .text
 _start:
@@ -144,7 +146,7 @@ get_string:
         <hr>
 
         <h2 id="final">✅ Final Working shell.asm</h2>
-<pre><code class="language-nasm">; shell.asm - execve("/bin//sh", NULL, NULL)
+<pre><code class="language-none">; shell.asm - execve("/bin//sh", NULL, NULL)
 
 BITS 32
 global _start
@@ -228,5 +230,8 @@ ld -m elf_i386 shell.o -o shell
 
     <button id="mode-toggle">🌙</button>
     <script src="assets/js/darkmode.js"></script>
+    <!-- Highlight.js Script -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
 </body>
 </html>
