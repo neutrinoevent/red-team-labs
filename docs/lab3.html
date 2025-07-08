@@ -9,12 +9,20 @@
 </head>
 <body>
   <div class="container">
-    <h1>🔪 Lab 3: XOR Shellcode Decoder and Execution</h1>
+    <h1 id="lab-3">🔪 Red Team Lab Report: XOR Shellcode Decoder and Execution</h1>
+    <p><strong>Author:</strong> Alexander Nichols<br>
+       <strong>Date:</strong> July 7th, 2025<br>
+       <strong>Platform:</strong> Kali Linux<br>
+       <strong>Category:</strong> Red Team Development / Shellcode Engineering<br>
+       <strong>Objective:</strong> Build and execute a custom XOR shellcode decoder in x86 assembly, overcoming modern memory protection challenges.
+    </p>
+    <hr>
 
-    <h2>🌐 Introduction</h2>
+    <h2>🌐 Overview</h2>
     <p>This lab focused on building and executing a custom XOR shellcode decoder in x86 assembly. The goal: craft shellcode that executes <code>/bin/sh</code>, encode it with a fixed XOR key, and write a stub that decodes and runs it at runtime. Though the theory was familiar from prior work in binary exploitation, implementing it turned into a multi-day deep dive into segmentation faults, memory protection mechanics, and executable memory behavior on modern Linux systems.</p>
     <p>What unfolded was a vivid exercise in persistence and precision. We encountered—and overcame—nearly every pitfall possible when executing self-modifying shellcode. In this report, we document that journey in granular detail, preserving the command history and architecture-level insight that led to our success.</p>
 
+    
     <h2>🛠️ Stage 1: Crafting the Initial Shellcode</h2>
     <p>We began with standard <code>execve</code> shellcode. The assembly looked like:</p>
 <pre><code class="language-nasm">; shell.asm - execve("/bin//sh", NULL, NULL)
@@ -170,6 +178,31 @@ xor_key     equ 0xAA</code></pre>
 
     <h2>📚 Conclusion</h2>
     <p>This lab forced us to internalize memory permissions, instruction flow, and binary hygiene. It highlighted the fragility and control needed when executing dynamically constructed shellcode in memory. What started as a small shell script evolved into a deeply instructive and hands-on exploration of Linux memory protection.</p>
+
+    <h2 id="red-team-value">🔐 Red Teaming Value</h2>
+    <p>This lab provided tangible insight into how real-world payloads survive execution constraints. From W^X protections to stack execution, we saw how modern Linux environments block naive shellcode — and how subtle shifts in memory usage make or break an exploit.</p>
+    <blockquote>
+      🧠 <strong>Reflection:</strong><br>
+      Debugging our way out of segmentation faults taught me more about low-level execution than any CTF challenge ever has. Seeing memory protections in action made every <code>jmp</code>, <code>pop</code>, and <code>lea</code> mean something real.
+    </blockquote>
+
+    <h2 id="skills">✅ Skills Demonstrated</h2>
+    <ul>
+      <li>✅ Shellcode encoding and XOR logic</li>
+      <li>✅ NASM decoder loop construction</li>
+      <li>✅ GDB + pwndbg debugging</li>
+      <li>✅ Executable stack use with <code>-z execstack</code></li>
+      <li>✅ Memory permissions and segmentation awareness</li>
+      <li>✅ Position-independent code via <code>jmp-call-pop</code></li>
+    </ul>
+
+    <h2 id="next">🚀 Next Labs</h2>
+    <ul>
+      <li>Rolling XOR decoders (key shifting)</li>
+      <li>Polymorphic or metamorphic shellcode</li>
+      <li>Shellcode injection into host processes</li>
+      <li>Payload delivery via BOF with runtime decoding</li>
+    </ul>
 
     <p><em>All work performed in a self-contained Kali Linux lab. Questions or feedback? <a href="https://www.linkedin.com/in/alnich1/" target="_blank">Let's connect</a>.</em></p>
     <p><a href="labs.html">⬅ Back to Labs</a></p>
