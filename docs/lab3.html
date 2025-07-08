@@ -19,7 +19,7 @@
     <hr>
 
     <h2>🌐 Overview</h2>
-    <p>This lab focused on building and executing a custom XOR shellcode decoder in x86 assembly. The goal: craft shellcode that executes <code>/bin/sh</code>, encode it with a fixed XOR key, and write a stub that decodes and runs it at runtime. Though the theory was familiar from prior work in binary exploitation, implementing it turned into a multi-day deep dive into segmentation faults, memory protection mechanics, and executable memory behavior on modern Linux systems.</p>
+    <p>This lab focused on building and executing a custom XOR shellcode decoder in x86 assembly. The goal: craft shellcode that executes <code>/bin/sh</code>, encode it with a fixed XOR key, and write a stub that decodes and runs it at runtime. Though the theory was familiar from prior work in binary exploitation, implementing it turned into a deep dive into segmentation faults, memory protection mechanics, and executable memory behavior on modern Linux systems.</p>
     <p>What unfolded was a vivid exercise in persistence and precision. We encountered—and overcame—nearly every pitfall possible when executing self-modifying shellcode. In this report, we document that journey in granular detail, preserving the command history and architecture-level insight that led to our success.</p>
 
     
