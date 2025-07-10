@@ -35,6 +35,35 @@
   <p>Ran the payload. A shell popped open — but in the <em>same terminal</em>. Not in the listener. Not in the other tab.</p>
   <p><strong>Huh.</strong></p>
 
+<details>
+  <summary><strong>🧵 Want to go deeper? Click here to learn about sockets, syscalls, and what this lab is really doing under the hood.</strong></summary>
+  <div style="margin-top: 1em;">
+    <h3>🔌 What Is a Socket?</h3>
+    <p>A socket is a low-level abstraction for communication between processes — either on the same machine or across a network. When you call <code>socket()</code> in Linux, you're telling the kernel: "Give me a file descriptor I can use to speak over TCP/IP."</p>
+    <p>In our shellcode, we do this manually using syscalls and syscall numbers. No libc. No wrapper functions. Just bytes.</p>
+
+    <h3>🧱 How Do We Use It in This Lab?</h3>
+    <ol>
+      <li><strong>Create a socket:</strong> <code>socket(AF_INET, SOCK_STREAM, 0)</code> means: “I want a TCP socket for IPv4”.</li>
+      <li><strong>Connect to the listener:</strong> We build a <code>sockaddr_in</code> struct on the stack (with IP + port) and call <code>connect()</code>.</li>
+      <li><strong>Redirect stdio:</strong> We use <code>dup2()</code> to copy the socket FD into stdin (0), stdout (1), stderr (2).</li>
+      <li><strong>Spawn shell:</strong> <code>execve("/bin/sh", NULL, NULL)</code> launches a shell that now talks over the socket.</li>
+    </ol>
+
+    <h3>🛠️ What Makes This Hard?</h3>
+    <ul>
+      <li>We can’t use C structs — we have to build the sockaddr struct <em>by hand</em> on the stack.</li>
+      <li>All arguments must be passed via pointers on the stack, not registers.</li>
+      <li>We must use the <code>socketcall</code> syscall interface (Linux 32-bit) which multiplexes socket functions.</li>
+      <li>Endianness matters. We must encode IP and port in little-endian format and <code>htons()</code> must be manually applied.</li>
+    </ul>
+
+    <h3>📦 Why This Matters for Red Teaming</h3>
+    <p>Manual sockets = manual implants. If you want to build payloads that evade detection, blend in with traffic, or run in stripped-down environments, you must understand networking at the syscall level. This is the kind of muscle that lets you craft <em>real-world</em> implants — not just CTF scripts.</p>
+  </div>
+</details>
+
+
   <h2>🔎 Round One: The "Something’s Off" Phase</h2>
   <p>Tried different listener flags:</p>
   <pre><code class="language-bash">nc -l -p 4444 -s 127.0.0.1 -n -v</code></pre>
