@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lab 2 – Endianness, Stack Behavior & Clean x86 Shellcode</title>
+  <link rel="stylesheet" href="assets/css/style.css"/>
+</head>
+<body>
+  <div class="container">
+    <h1 id="lab-2">🧪 Red Team Lab Report: Endianness, Stack Behavior & Clean Shellcode on x86</h1>
+    <p><strong>Author:</strong> Alexander Nichols<br>
+       <strong>Date:</strong> July 6th, 2025<br>
+       <strong>Platform:</strong> Kali Linux<br>
+       <strong>Category:</strong> Red Team Development / Memory Internals / Exploit Dev<br>
+       <strong>Objective:</strong> Understand and demonstrate little-endian memory behavior in x86 systems, especially when writing shellcode by hand. Includes tooling to support faster exploit development.
+    </p>
+    <hr>
+
+    <h2 id="overview">🛏️ Overview</h2>
+    <p>This lab explores a deceptively simple concept — <code>endianness</code> — and its real-world impact when writing raw x86 shellcode. It’s built around a minimal <code>execve("/bin//sh")</code> shellcode and walks through how to:</p>
+    <ul>
+      <li>Handle memory layout differences (big vs little endian)</li>
+      <li>Convert addresses and strings to little-endian format for <code>push</code> instructions</li>
+      <li>Correctly set up registers like <code>esp</code> and <code>ebx</code></li>
+      <li>Automate conversions using a Python helper script</li>
+    </ul>
+    <hr>
+
+    <h2 id="endianness">📚 What is Endianness?</h2>
+    <table>
+      <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Big-endian</strong></td><td>Stores the most significant byte (MSB) first (lowest address)</td></tr>
+        <tr><td><strong>Little-endian</strong></td><td>Stores the least significant byte (LSB) first (lowest address)</td></tr>
+        <tr><td><strong>x86 architecture</strong></td><td>Uses <strong>little-endian</strong> by default</td></tr>
+      </tbody>
+    </table>
+    <p>Example: <code>0x12345678</code> in little-endian memory appears as:</p>
+    <pre><code>0x78 0x56 0x34 0x12</code></pre>
+
+    <blockquote>
+      <b>🧠 Why reverse strings?</b><br>
+      x86 uses little-endian memory layout — least significant byte at the lowest address.<br>
+      When pushing a string like <code>"/bin"</code> to the stack, we reverse it to <code>0x6e69622f</code> so it appears correctly in memory.
+    </blockquote>
+    <hr>
+
+    <h2 id="why-it-matters">💡 Why Red Teamers Should Care</h2>
+    <ul>
+      <li><strong>Exploit Dev:</strong> Incorrect byte order breaks return addresses or shell strings.</li>
+      <li><strong>Shellcode Authorship:</strong> <code>push</code> instructions depend on endianness.</li>
+      <li><strong>Packet Crafting:</strong> Network protocols use big-endian; x86 memory uses little-endian.</li>
+      <li><strong>Reverse Engineering:</strong> Misreading endianness leads to faulty disassembly interpretation.</li>
+    </ul>
+    <hr>
+
+<h2 id="stack-drill">📦 Shellcode Demonstrations: Stack + Syscall Execution</h2>
+
+<h3>🧪 Minimal Version (for stack visualization)</h3>
+<pre><code class="language-nasm">_start:
+    push 0x68732f2f  ; //sh
+    push 0x6e69622f  ; /bin
+    mov ebx, esp     ; ebx → "/bin//sh"
+    jmp $            ; halt here (infinite loop)
+</code></pre>
+
+<details>
+  <summary>🔍 Step-by-step breakdown (Minimal Version)</summary>
+  <ul>
+    <li><code>push 0x68732f2f</code>: Pushes the bytes for "<code>//sh</code>" in reverse order (little-endian). The top of the stack now ends with "<code>sh</code>".</li>
+    <li><code>push 0x6e69622f</code>: Pushes "<code>/bin</code>" in reverse. Now the full string "<code>/bin//sh</code>" is on the stack.</li>
+    <li><code>mov ebx, esp</code>: Stores the address of the top of the stack (the start of our string) into EBX.</li>
+    <li><code>jmp $</code>: Jumps to current instruction (infinite loop). Useful in debugging — lets us inspect memory state before triggering any syscall.</li>
+  </ul>
+  <p><strong>🧠 Why this matters:</strong> This is the core pattern used in all shellcode: build the string, set the pointer, and prep for syscall. We freeze execution here so we can analyze the stack in <code>gdb</code> or <code>pwndbg</code>.</p>
+</details>
+
+<h3>🚀 Complete Version (with execve syscall)</h3>
+<pre><code class="language-nasm">_start:
+    xor eax, eax         ; eax = 0
+    push eax             ; null terminator
+    push 0x68732f2f      ; //sh
+    push 0x6e69622f      ; /bin
+    mov ebx, esp         ; ebx → "/bin//sh"
+    push eax             ; argv[1] = NULL
+    push ebx             ; argv[0] = pointer to "/bin//sh"
+    mov ecx, esp         ; ecx → argv
+    mov edx, eax         ; edx = NULL
+    mov al, 0x0b         ; syscall number (execve)
+    int 0x80             ; invoke syscall
+</code></pre>
+
+<details>
+  <summary>🔍 Line-by-line breakdown (Complete Shellcode)</summary>
+  <ul>
+    <li><code>xor eax, eax</code>: Zeroes out EAX — a common pattern to avoid NULL bytes in shellcode. Sets us up to push a null terminator and later set syscall number cleanly.</li>
+    <li><code>push eax</code>: Pushes 0x00000000 (NULL) — this becomes the null terminator for our string.</li>
+    <li><code>push 0x68732f2f</code>: Pushes "//sh" in little-endian order.</li>
+    <li><code>push 0x6e69622f</code>: Pushes "/bin" in little-endian order. Now the stack has "/bin//sh\\x00" fully assembled.</li>
+    <li><code>mov ebx, esp</code>: EBX = pointer to the "/bin//sh" string — required for execve’s first argument (<code>filename</code>).</li>
+    <li><code>push eax</code>: Pushes NULL as the second argument in argv[] (argv[1] = NULL).</li>
+    <li><code>push ebx</code>: Pushes pointer to "/bin//sh" as first element in argv[].</li>
+    <li><code>mov ecx, esp</code>: ECX now points to the argv array (array of pointers).</li>
+    <li><code>mov edx, eax</code>: EDX = NULL — used for the envp[] argument (we’re not passing any env vars).</li>
+    <li><code>mov al, 0x0b</code>: AL = 11 (syscall number for <code>execve</code> on Linux).</li>
+    <li><code>int 0x80</code>: Trigger the kernel interrupt — this executes <code>execve("/bin//sh", ["/bin//sh", NULL], NULL)</code>.</li>
+  </ul>
+  <p><strong>Result:</strong> If successful, this spawns a shell with no arguments or environment.</p>
+</details>
+
+<h2 id="bonus">🧠 Bonus Insight: <code>mov ebx, esp</code></h2>
+<p>This is the magic move that connects your stack prep to <code>execve()</code>. Once you’ve pushed the <code>"/bin//sh"</code> string onto the stack, the stack pointer (<code>esp</code>) points directly to the start of that string. In other words, we already have a valid pointer in memory — no <code>malloc</code>, no static buffer, no address hardcoding.</p>
+
+<p>By doing <code>mov ebx, esp</code>, we’re handing that exact pointer to the kernel — telling it: "this is the binary I want to execute." That’s because <code>execve()</code> expects three arguments:</p>
+
+<pre><code>
+ebx: a pointer to the filename           (const char *filename)
+ecx: a pointer to an array of arguments  (char *const argv[])
+edx: a pointer to an array of env vars   (char *const envp[])
+</code></pre>
+
+<p>Everything starts with the filename — and that’s what this move sets up.</p>
+
+<p>Here’s why it matters: hardcoding an address (like <code>mov ebx, 0xdeadbeef</code>) might work in one layout, but will almost always fail in a real-world exploit or when ASLR (Address Space Layout Randomization) is in play. The stack is the only reliable scratchpad we control — and <code>esp</code> is our live pointer into it. So instead of guessing where our string landed, we just push it, and immediately grab its address via <code>esp</code>.</p>
+
+<p>This makes the shellcode position-independent. You don’t need to know where it’s running — just that the stack is writable and executable. That’s why this pattern (<code>mov ebx, esp</code>) is baked into everything from bare-metal shellcode to modern ROP chains. It solves the address problem without making assumptions about memory layout — and that makes it resilient.</p>
+<hr>
+
+<h3>📉 Register State Summary</h3>
+<pre><code>
+EAX = 0x0b      ; execve syscall number
+EBX = pointer to "/bin//sh"
+ECX = pointer to argv array
+EDX = 0 (NULL envp)
+ESP = stack top, contains string and argv
+</code></pre>
+
+    <hr>
+
+    <h2 id="memory-breakdown">🔬 In-Memory Breakdown (little-endian, stack grows down)</h2>
+    <pre><code>           Higher Memory Addresses
+┌─────────────────────┐
+│ [0x6e] ; 'n'        │
+│ [0x69] ; 'i'        │
+│ [0x62] ; 'b'        │
+│ [0x2f] ; '/'        │
+│ [0x68] ; 'h'        │
+│ [0x73] ; 's'        │
+│ [0x2f] ; '/'        │
+│ [0x2f] ; '/'        │
+└─────────────────────┘
+            ↑ esp points here (start of "/bin//sh")
+</code></pre>
+
+<blockquote>
+  🧠 <strong>Note:</strong> After <code>mov ebx, esp</code>, <code>ebx</code> correctly points to the string <code>"/bin//sh"</code>, which will be passed as the first argument to <code>execve()</code>.
+</blockquote>
+
+<hr>
+
+    <h2 id="python-helper">🔧 Python Helper Tool: Little-Endian Converter</h2>
+    <pre><code class="language-python">def to_little_endian(val, size=4):
+    if isinstance(val, str):
+        val = int(val, 16) if val.startswith("0x") else int(val)
+    return val.to_bytes(size, byteorder="little")
+
+def str_to_le_chunks(s):
+    s = s.ljust(((len(s) + 3) // 4) * 4, '\\x00')
+    return [s[i:i+4][::-1].encode('latin1') for i in range(0, len(s), 4)]
+
+if __name__ == "__main__":
+    print("Little Endian Address Tool")
+    choice = input("Convert (1) hex address or (2) string? ")
+    if choice == "1":
+        addr = input("Enter hex address (e.g., 0xdeadbeef): ")
+        le = to_little_endian(addr)
+        print(f"Little-endian: {''.join(f'\\x{b:02x}' for b in le)}")
+    elif choice == "2":
+        string = input("Enter string (e.g., /bin//sh): ")
+        chunks = str_to_le_chunks(string)
+        for c in chunks:
+            print(f"push 0x{c[::-1].hex()}  ; {c[::-1].decode('latin1')}")
+</code></pre>
+    <hr>
+
+    <h2 id="red-team-value">🔐 Red Teaming Value</h2>
+    <p>This drill strengthened:</p>
+    <ul>
+      <li>Understanding of stack memory layout</li>
+      <li>How shellcode interacts with CPU architecture</li>
+      <li>ESP and register setup for syscall arguments</li>
+      <li>Reusable tooling for exploit work (ROP, BOF, etc.)</li>
+    </ul>
+    <blockquote>
+      <b>🧠 Personal Note:</b><br>
+      I practiced breaking shellcode into clean, explainable blocks — a useful skill for writing safe PoCs, Red Team implants, or debugging unknown payloads.
+    </blockquote>
+    <hr>
+
+
+    <h2 id="skills">✅ Skills Demonstrated</h2>
+    <ul>
+      <li>✅ x86 memory layout and byte order</li>
+      <li>✅ Manual shellcode stack setup</li>
+      <li>✅ Register argument setup for syscalls</li>
+      <li>✅ Understanding of syscall conventions (int 0x80)</li>
+      <li>✅ Memory inspection with <code>gdb</code></li>
+      <li>✅ Python tooling for binary manipulation</li>
+    </ul>
+    <hr>
+
+    <h2 id="next">🚀 Next Labs</h2>
+    <ul>
+      <li>Runtime decoding of XOR-encoded shellcode</li>
+      <li>Injecting shellcode via overflow into <code>.text</code> segment</li>
+      <li>Writing multi-stage shellcode loaders</li>
+      <li>Endianness reversal for custom binary formats</li>
+    </ul>
+    <hr>
+
+    <p><em>All work performed in a self-contained Kali Linux lab. Questions or feedback? <a href="https://www.linkedin.com/in/alnich1/" target="_blank">Let's connect</a>.</em></p>
+    <p><a href="labs.html">⬅ Back to Labs</a></p>
+  </div>
+
+  <button id="mode-toggle">🌙</button>
+  <script src="assets/js/darkmode.js"></script>
+</body>
+</html>

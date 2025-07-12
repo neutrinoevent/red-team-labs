@@ -1,0 +1,86 @@
+/* ----------- CODE & PRE FORMATTING ----------- */
+pre {
+  background-color: #1b1b1b;
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.95em;
+}
+
+code {
+  font-family: 'Fira Code', monospace;
+  font-size: 0.95em;
+}
+
+/* Highlight.js overrides (if needed) */
+.hljs {
+  background: none !important;
+  color: inherit;
+}
+
+/* ----------- TABLES ----------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid #333;
+  padding: 0.5em;
+}
+th {
+  background-color: #1a1a1a;
+  color: #00ffc3;
+  text-align: left;
+}
+td code {
+  color: #7edfff;
+}
+
+/* ----------- HEADINGS ----------- */
+h1, h2, h3 {
+  color: #00ffc3;
+  margin-top: 2em;
+}
+
+/* ----------- HR LINE ----------- */
+hr {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 2em 0;
+}
+
+/* ----------- BACK TO LABS BUTTON ----------- */
+.back-button {
+  margin-top: 2em;
+}
+.back-button a {
+  display: inline-block;
+  background: #00ffc3;
+  color: #111;
+  padding: 0.5em 1em;
+  border-radius: 999px;
+  font-weight: bold;
+}
+.back-button a:hover {
+  background: #00d0a4;
+  text-decoration: none;
+}
+
+/* ----------- LIGHT MODE PATCHES ----------- */
+body.light-mode pre {
+  background-color: #f0f0f0;
+  color: #111;
+}
+body.light-mode table th {
+  background-color: #e0e0e0;
+  color: #111;
+}
+body.light-mode .back-button a {
+  background: #007acc;
+  color: #fff;
+}
+body.light-mode .back-button a:hover {
+  background: #005fa3;
+}

